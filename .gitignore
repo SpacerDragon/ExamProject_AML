@@ -1,0 +1,8 @@
+.lfsconfig
+.gitattributes
+.python-version
+.DS_Store
+csv_files/
+models/
+plots/
+
