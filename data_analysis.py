@@ -3,10 +3,13 @@
 # Script to load, clean and combine data from 2009-2010 and 2010-2011,
 # as well as removing missing entries, generating rules
 # using the apriori method, grouping customers using the rfm(recency,
-# frequency, monetary) method. Creating visualizations showing the impact of
-# the rules created. Exporting the enriched DataFrame as a new csv-file, ready
+# frequency, monetary) method. Applying unsupervised clustering to the data.
+# Creating visualizations showing the impact of the rules created.
+# Finally exporting the enriched DataFrame as a new csv-file, ready
 # for machine learning algorithms.
+
 # Author: Per Idar Rød.
+# post@peridar.net
 
 # Importing necessary libraries
 import os
@@ -16,12 +19,19 @@ from mlxtend.frequent_patterns import apriori, association_rules
 import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 
-csv_dir = './csv_files'
+
+# Setting up paths
+csv_dir = './csv_files/'
+plot_dir = './plots/'
 os.makedirs(csv_dir, exist_ok=True)
+os.makedirs(plot_dir, exist_ok=True)
 
 
-# Pre-processing
 def preprocess_data():
 
     # Importing from the two different csv files
@@ -63,10 +73,6 @@ def preprocess_data():
         '([A-Za-z]+)', expand=False)
     # Setting 'None' in all missing fields in 'CancelledOrder' column
     # data['CancelledOrders'] = data['CancelledOrders'].fillna('None')
-    # Removing rows containing CancelledOrders
-    # cancelled_orders = len(data[data['CancelledOrders'] == 'C'])
-    # print(f"Cancelled Orders: {cancelled_orders}")
-    # data = data[data['CancelledOrders'] != 'C']
     # Dropping column 'CancelledOrders' as it now contains only 'None'
     data.drop('CancelledOrders', axis=1, inplace=True)
 
@@ -77,8 +83,7 @@ def preprocess_data():
     # held 'Manual' and 'POSTAGE' in the description column
     # Removing those rows.
     # There also were made manual adjustments in the data,
-    # as well as discounts.
-    # It was found while running clustering.
+    # as well as discounts code.
     # Removing these as well
     # Other clusters held 'Dotcom postage' and 'Cruk commission'.
     # Next issue were large negative quantitys and price.
@@ -100,9 +105,6 @@ def preprocess_data():
     data.dropna(subset=['Customer ID'], inplace=True)
     # Converting 'Customer ID' to integers.
     data['Customer ID'] = data['Customer ID'].astype(int)
-    # negative_ones_count = (data['Customer ID'] == -1).sum()
-    # print(f"Number of - 1s in Customer ID: {negative_ones_count}")
-
     # Handling missing 'StockCode' data.
     data['StockCode'] = data['StockCode'].fillna(0).astype(int)
     # Handling missing 'Descriptions'
@@ -153,34 +155,10 @@ def preprocess_data():
     # Displaying sample from the dataframe for visual confirmation.
     print("\nCleaned data sample:\n", data.head().to_string(index=False))
 
-    # Splitting the data for the regression task in (CLV)
-    cut_off_date = pd.to_datetime('2010-12-01')
-    feature_data = data[data['InvoiceDate'] < cut_off_date]
-    target_data = data[data['InvoiceDate'] >= cut_off_date]
-
-    # Calculate total spend for each cutomer in the target period.
-    total_spend = target_data.groupby(
-        'Customer ID')['Price'].sum().reset_index()
-    total_spend.rename(columns={'Price': 'FutureSpend'}, inplace=True)
-
-    # Round FutureSpend to 2 decimal places
-    total_spend['FutureSpend'] = total_spend['FutureSpend'].round(2)
-
-    # Merging back into 'feature_data'.
-    feature_data = feature_data.merge(
-        total_spend, on='Customer ID', how='left')
-
-    # Filling NaN values for customers with no spending data in target period.
-    feature_data['FutureSpend'] = feature_data['FutureSpend'].fillna(0)
-    # zero_count = (feature_data['FutureSpend'] == 0).sum()
-    # print("Number of 0's in the dataset:\n", zero_count)
-
-    return data, feature_data
+    return data
 
 
-# Customer segmentation part
-def customer_segmentation(data):
-    # data = preprocessed_data.copy()
+def rfm_analysis(data):
 
     # Adding one day to the end of the 'InvoiceDate' to avoid getting 0s.
     # This is done because of the recency part in the rfm analysis.
@@ -231,7 +209,7 @@ def customer_segmentation(data):
     return data
 
 
-def market_basket_analysis(data, clv=False):
+def market_basket_analysis(data):
     # Converting grouped items to a list of lists,
     # where each list contains items from a single invoice.
     transactions = data.groupby('Invoice')['Description'].apply(list).tolist()
@@ -271,22 +249,21 @@ def market_basket_analysis(data, clv=False):
                            'lift'
                            ]]
 
-    # Sorting Dataframes for displaying.
+    # Sorting Dataframes for displaying/saving to csv.
     support_sorted = focused_rules.sort_values(by='support', ascending=False)
     confidence_sorted = focused_rules.sort_values(
         by='confidence', ascending=False)
     lift_sorted = focused_rules.sort_values(by='lift', ascending=False)
 
-    if not clv:
-        try:
-            print("Saving files!")
-            support_sorted.to_csv(f'{csv_dir}/support_rules.csv')
-            confidence_sorted.to_csv(f'{csv_dir}/confidence_rules.csv')
-            lift_sorted.to_csv(f'{csv_dir}/lift_rules.csv')
-            print("Files Saved!")
-        except Exception as e:
-            print(f"Failed to save the file: {e}")
-            exit(1)
+    try:
+        print("Saving files!")
+        support_sorted.to_csv(f'{csv_dir}support_rules.csv')
+        confidence_sorted.to_csv(f'{csv_dir}confidence_rules.csv')
+        lift_sorted.to_csv(f'{csv_dir}lift_rules.csv')
+        print("Files Saved!")
+    except Exception as e:
+        print(f"Failed to save the file: {e}")
+        exit(1)
 
     # Creating new features from the rules, and combining them with
     # the 'data' dataframe.
@@ -305,7 +282,7 @@ def market_basket_analysis(data, clv=False):
         return 1 if antecedents_set.issubset(items_set) \
             and consequents_set.issubset(items_set) else 0
 
-    # Top 10 rules taken from the 'confidence_sorted' dataframe.
+    # Top 10 rules taken from the 'lift_sorted' dataframe.
     for index, rule in top_rules_lift.iterrows():
         antecedents = rule['antecedents']
         consequents = rule['consequents']
@@ -335,64 +312,250 @@ def market_basket_analysis(data, clv=False):
     lift_sorted['itemsets'] = lift_sorted['antecedents'] + \
         ' +\n ' + lift_sorted['consequents']
 
-    if not clv:
-        plot_path = './plots'
-        # Visualization of the most common itemsets(antecedent + consequents).
+    return data, support_sorted, confidence_sorted, lift_sorted
+
+
+def save_plots(support_sorted, confidence_sorted, lift_sorted):
+
+    # Visualization of the most common itemsets(antecedent + consequents).
+    fig, ax = plt.subplots(figsize=(10, 8))
+    sns.barplot(x='support', y='itemsets',
+                data=support_sorted.head(10), color='darkblue')
+    ax.set_title('Top 10 Most Common Itemsets by Support')
+    ax.set_xlabel('Support')
+    ax.set_ylabel('Itemsets (Antecedent + Consequent)')
+    ax.xaxis.set_major_locator(MaxNLocator(10))
+    fig.tight_layout()
+    fig.savefig(f'{plot_dir}top_itemsets_by_support.png', dpi=300,
+                format='png', bbox_inches='tight')
+
+    # Setting the lower xlim to 0.5 because the threshold in the
+    # association rules was set to 0.5. The upper limit is set to 1.0
+    # which is the maximum for confidence, showing the full possible range.
+    fig1, ax1 = plt.subplots(figsize=(10, 8))
+    sns.barplot(x='confidence', y='itemsets',
+                data=confidence_sorted.head(10), color='darkblue')
+    ax1.set_xlim(0.5, 1.0)
+    ax1.set_title('Top 10 Rules for Confidence')
+    ax1.set_xlabel('Confidence')
+    ax1.set_ylabel('Itemsets (Antecedent + Consequent)')
+    ax1.xaxis.set_major_locator(MaxNLocator(10))
+    fig1.tight_layout()
+    fig1.savefig(f'{plot_dir}top_itemsets_by_confidence.png', dpi=300,
+                 format='png', bbox_inches='tight')
+
+    fig2, ax2 = plt.subplots(figsize=(10, 8))
+    sns.barplot(x='lift', y='itemsets',
+                data=lift_sorted.head(10), color='darkblue')
+    ax2.set_title('Top 10 Rules for Lift')
+    ax2.set_xlabel('Lift')
+    ax2.set_ylabel('Itemsets (Antecedent + Consequent)')
+    ax2.xaxis.set_major_locator(MaxNLocator(10))
+    fig2.tight_layout()
+    fig2.savefig(f'{plot_dir}top_itemsets_by_lift.png', dpi=300,
+                 format='png', bbox_inches='tight')
+
+    plt.close('all')
+
+
+def split_data(data):
+    # Splitting the data for the regression task in (CLV)
+    cut_off_date = pd.to_datetime('2010-12-01')
+    feature_data = data[data['InvoiceDate'] < cut_off_date]
+    target_data = data[data['InvoiceDate'] >= cut_off_date]
+
+    # Debug: Print shapes of split data
+    print("Feature data shape:", feature_data.shape)
+    print("Target data shape:", target_data.shape)
+
+    # Debug: Print unique customers in feature_data and target_data
+    print("Unique customers in feature_data:",
+          feature_data['Customer ID'].nunique())
+    print("Unique customers in target_data:",
+          target_data['Customer ID'].nunique())
+
+    # Calculate total spend for each cutomer in the target period.
+    total_spend = target_data.groupby(
+        'Customer ID')['Price'].sum().reset_index()
+    total_spend.rename(columns={'Price': 'FutureSpend'}, inplace=True)
+
+    # Debug: Print the first few rows of total_spend
+    print("Total spend sample:\n", total_spend.head())
+
+    # Round FutureSpend to 2 decimal places
+    total_spend['FutureSpend'] = total_spend['FutureSpend'].round(2)
+
+    # Debug: Check if there are any NaNs in total_spend
+    print("NaNs in total_spend['FutureSpend']:",
+          total_spend['FutureSpend'].isna().sum())
+
+    # Cap FutureSpend at the 99th percentile
+    cap_value = total_spend['FutureSpend'].quantile(0.99)
+    total_spend['FutureSpend'] = total_spend['FutureSpend'].clip(
+        upper=cap_value)
+
+    # Debug: Check the distribution of FutureSpend after capping
+    print("Capped FutureSpend distribution:\n",
+          total_spend['FutureSpend'].describe())
+
+    # Merging back into 'feature_data'.
+    feature_data = feature_data.merge(
+        total_spend, on='Customer ID', how='left')
+
+    # Filling NaN values for customers with no spending data in target period.
+    feature_data['FutureSpend'] = feature_data['FutureSpend'].fillna(0)
+    # zero_count = (feature_data['FutureSpend'] == 0).sum()
+    # print("Number of 0's in the dataset:\n", zero_count)
+
+    # Debug: Check the distribution of FutureSpend
+    print("FutureSpend distribution:\n",
+          feature_data['FutureSpend'].describe())
+
+    try:
+        feature_data.to_csv(f"{csv_dir}training_data.csv", index=False)
+    except Exception as e:
+        print(f"Could not save file:\n{e}")
+        exit(1)
+
+    return feature_data
+
+
+def kMeans_clustering(data):
+    data = data.copy(deep=True)
+
+    # Converting from string to datetime
+    data['InvoiceDate'] = pd.to_datetime(data['InvoiceDate'])
+    # Adding some time elements for the clustering algo.
+    data['Month'] = data['InvoiceDate'].dt.month
+    data['DayOfWeek'] = data['InvoiceDate'].dt.dayofweek
+    data['TimeOfDay'] = data['InvoiceDate'].dt.hour
+
+    # Converting RFM scores to categorical
+    data['R_Score'] = data['R_Score'].astype(str)
+    data['F_Score'] = data['F_Score'].astype(str)
+    data['M_Score'] = data['M_Score'].astype(str)
+
+    # Setting order in rfm_level to get the heatmap correct
+    rfm_order = ['High Value', 'Medium Value', 'Low Value']
+    data['RFM_Level'] = pd.Categorical(
+        data['RFM_Level'], categories=rfm_order, ordered=True)
+
+    print("Starting clustering pipeline...")
+    try:
+        # Defining columns for different preprocessing.
+        categorical_cols = ['Country', 'R_Score', 'F_Score', 'M_Score']
+        numeric_cols = ['Quantity', 'Price', 'Month', 'DayOfWeek', 'TimeOfDay']
+        rule_lift_cols = [col for col in data.columns if 'Rule_' in col]
+
+        # Preproccessing pipeline
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('num', StandardScaler(), numeric_cols + rule_lift_cols),
+                ('cat', OneHotEncoder(), categorical_cols),
+            ], verbose=True
+        )
+
+        data_processed = preprocessor.fit_transform(
+            data[numeric_cols + categorical_cols + rule_lift_cols])
+
+        # Clustering
+        kmeans = KMeans(n_clusters=3, random_state=1, verbose=1)
+        kmeans.fit(data_processed)
+        cluster_labels = kmeans.labels_
+        data['ClusterGroup'] = cluster_labels
+
+        # Evaluating clusters
+        print("Starting Evaluation using silhouette.")
+        silhouette = silhouette_score(
+            data_processed,
+            cluster_labels,
+            sample_size=70000,
+            random_state=1,
+            n_jobs=-1
+        )
+        print("Silhouette Score:", silhouette)
+
+        # Analyzing results
+        print(data[['Customer ID', 'ClusterGroup']].head(10))
+
+        # Including all numeric columns in aggregation
+        numeric_agg_cols = numeric_cols + rule_lift_cols
+        cluster_summary = data.groupby('ClusterGroup')[numeric_agg_cols].agg([
+            'mean', 'median']).reset_index()
+
+        print("\nCluster Summary:\n", cluster_summary)
+
+        # Comparing the findings
+        cross_tab = pd.crosstab(
+            data['RFM_Level'], data['ClusterGroup'], margins=True)
+        print("\nCross Tabulation:\n", cross_tab)
+
         fig, ax = plt.subplots(figsize=(10, 8))
-        sns.barplot(x='support', y='itemsets',
-                    data=support_sorted.head(10), color='darkblue')
-        ax.set_title('Top 10 Most Common Itemsets by Support')
-        ax.set_xlabel('Support')
-        ax.set_ylabel('Itemsets (Antecedent + Consequent)')
-        ax.xaxis.set_major_locator(MaxNLocator(10))
+        sns.heatmap(cross_tab.iloc[:-1, :-1],
+                    annot=True, fmt="d", cmap="Blues")
+        ax.set_title('Heatmap of RFM Level and ML Cluster Cross-Tabulation')
+        ax.set_xlabel('ClusterGroup')
+        ax.set_ylabel('RFM Level')
         fig.tight_layout()
-        os.makedirs(plot_path, exist_ok=True)
-        fig.savefig(f'{plot_path}/top_itemsets_by_support.png', dpi=300,
+
+        fig.savefig(f'{plot_dir}heatmap_rfm_clustergroups.png', dpi=300,
                     format='png', bbox_inches='tight')
 
-        # Setting the lower xlim to 0.5 because the threshold in the
-        # association rules was set to 0.5. The upper limit is set to 1.0
-        # which is the maximum for confidence, showing the full possible range.
-        fig1, ax1 = plt.subplots(figsize=(10, 8))
-        sns.barplot(x='confidence', y='itemsets',
-                    data=confidence_sorted.head(10), color='darkblue')
-        ax1.set_xlim(0.5, 1.0)
-        ax1.set_title('Top 10 Rules for Confidence')
-        ax1.set_xlabel('Confidence')
-        ax1.set_ylabel('Itemsets (Antecedent + Consequent)')
-        ax1.xaxis.set_major_locator(MaxNLocator(10))
-        fig1.tight_layout()
-        fig1.savefig(f'{plot_path}/top_itemsets_by_confidence.png', dpi=300,
-                     format='png', bbox_inches='tight')
+        base_columns = ['InvoiceDate',
+                        'Month',
+                        'DayOfWeek',
+                        'TimeOfDay',
+                        'Invoice',
+                        'Customer ID',
+                        'Country',
+                        'StockCode',
+                        'StockCodeVariation',
+                        'Description',
+                        'Quantity',
+                        'Price',
+                        'R_Score',
+                        'F_Score',
+                        'M_Score',
+                        'RFM_Level',
+                        'ClusterGroup',
+                        ]
 
-        fig2, ax2 = plt.subplots(figsize=(10, 8))
-        sns.barplot(x='lift', y='itemsets',
-                    data=lift_sorted.head(10), color='darkblue')
-        ax2.set_title('Top 10 Rules for Lift')
-        ax2.set_xlabel('Lift')
-        ax2.set_ylabel('Itemsets (Antecedent + Consequent)')
-        ax2.xaxis.set_major_locator(MaxNLocator(10))
-        fig2.tight_layout()
-        fig2.savefig(f'{plot_path}/top_itemsets_by_lift.png', dpi=300,
-                     format='png', bbox_inches='tight')
+        rule_columns = [
+            col for col in data.columns if 'Rule_' in col and 'lift' in col]
+
+        column_order = base_columns + sorted(rule_columns)
+        data = data[column_order]
+
+        try:
+            data.to_csv(f"{csv_dir}data.csv", index=False)
+        except Exception as e:
+            print(f"Could not save file:\n{e}")
+            exit(1)
 
         plt.close('all')
+        print("Results:\n", data.head())
+        print("Silhoutte:\n", silhouette)
+        print("\nClustering executed successfully.\n")
 
-    return data
+        return data
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
 
 
 def main():
     # Running the functions from here.
-    preprocessed_data, clv_data = preprocess_data()
-    segmentation_results = customer_segmentation(preprocessed_data)
-    mba_analysed_data = market_basket_analysis(segmentation_results)
-    mba_analysed_data.to_csv(f"{csv_dir}/data_featured.csv", index=False)
+    data = preprocess_data()
+    data_with_rfm = rfm_analysis(data)
 
-    # Featured dataset
-    clv_cs_results = customer_segmentation(clv_data)
-    clv_mba_results = market_basket_analysis(clv_cs_results, clv=True)
-    # print("clv cols: \n", clv_mba_results.columns)
-    clv_mba_results.to_csv(f'{csv_dir}/clv_data_featured.csv', index=False)
+    data_with_rfm_and_apriori_rules, support, confidence, lift = market_basket_analysis(
+        data_with_rfm)
+    save_plots(support, confidence, lift)
+
+    # Running unsupervised clustering algorithm.
+    featured_data = kMeans_clustering(data_with_rfm_and_apriori_rules)
+
+    training_data = split_data(featured_data)
 
 
 if __name__ == "__main__":
