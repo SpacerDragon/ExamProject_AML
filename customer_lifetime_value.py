@@ -10,6 +10,7 @@
 
 import os
 import pickle
+import math
 import pandas as pd
 import numpy as np
 from sklearn.compose import ColumnTransformer
@@ -37,50 +38,32 @@ os.makedirs(csv_dir, exist_ok=True)
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(plot_dir, exist_ok=True)
 
-# Custom transformer for log transformation
-
-
-# class LogTransformer:
-#     def fit(self, X, y=None):
-#         return self
-#
-#     def transform(self, X):
-#         return np.log1p(X)
-#
-#     def fit_transform(self, X, y=None):
-#         return self.fit(X, y).transform(X)
-
-
-def preprocess_data(data, feature_columns, categorical_features):
-    """Function for preprocessing of data.
-    Returns preprocessor
-    """
-    numerical_features = [
-        col for col in feature_columns if col not in categorical_features]
-
-    # log_transformer = FunctionTransformer(np.log1p, validate=True)
-
-    scaler = StandardScaler()
-
-    preprocessor = ColumnTransformer(
-        transformers=[
-            # ('log', log_transformer, numerical_features),
-            ('scaler', scaler, numerical_features),
-            ('cat', OneHotEncoder(), categorical_features)
-        ])
-
-    return preprocessor
-
 
 def check_data_distribution(data, feature_columns, categorical_features):
+    """
+    Check the distribution of the data by plotting histograms and box plots for numerical features.
+
+    Args:
+        data (pd.DataFrame): The input data.
+        feature_columns (list): List of feature columns to analyze.
+        categorical_features (list): List of categorical feature columns.
+
+    Returns:
+        None
+    """
+
     print("\nData distribution - Summary Statistics:\n",
           data[feature_columns].describe())
 
     numerical_features = [
         col for col in feature_columns if col not in categorical_features]
 
+    num_features = len(numerical_features)
+    num_cols = 3
+    num_rows = math.ceil(num_features / num_cols)
+
     # Histogram with KDE
-    fig, axs = plt.subplots(3, 3, figsize=(15, 10))
+    fig, axs = plt.subplots(num_rows, num_cols, figsize=(15, num_rows * 5))
     for i, col in enumerate(numerical_features):
         row, col_idx = divmod(i, 3)
         sns.histplot(data[col], bins=30, kde=True, ax=axs[row, col_idx])
@@ -91,7 +74,7 @@ def check_data_distribution(data, feature_columns, categorical_features):
     plt.close(fig)
 
     # Box-and-whisker plots
-    fig, axs = plt.subplots(3, 3, figsize=(15, 10))
+    fig, axs = plt.subplots(num_rows, num_cols, figsize=(15, num_rows * 5))
     for i, col in enumerate(numerical_features):
         row, col_idx = divmod(i, 3)
         sns.boxplot(y=data[col], ax=axs[row, col_idx])
@@ -102,52 +85,101 @@ def check_data_distribution(data, feature_columns, categorical_features):
     plt.close(fig)
 
 
+def plot_feature_importances(importances, title):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.barplot(x=list(importances.values()), y=list(
+        importances.keys()), color='darkblue')
+    ax.set_title(title)
+    ax.set_xlabel('Importance')
+    ax.set_ylabel('Feature')
+    fig.tight_layout()
+    fig.savefig(f"{plot_dir}{title}.png", dpi=300,
+                format='png', bbox_inches='tight')
+    plt.close(fig)
+
+
+def preprocess_data(data, feature_columns, categorical_features):
+    """Function for preprocessing of data.
+    Returns preprocessor
+    """
+    numerical_features = [
+        col for col in feature_columns if col not in categorical_features]
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            # ('log', log_transformer, numerical_features),
+            ('scaler', StandardScaler(), numerical_features),
+            ('cat', OneHotEncoder(), categorical_features)
+        ], remainder='passthrough'
+    )
+
+    return preprocessor
+
+
 def run_models(
         data,
         feature_columns,
         categorical_features,
         use_gridsearch=True):
-    X = data[feature_columns]
-    y = data['FutureSpend']
+    """
+    Run machine learning models on the provided data,
+    including hyperparameter tuning,
+    model evaluation, and saving the results.
 
-    # Scale target
-    y_scaler = StandardScaler()
-    y_scaled = y_scaler.fit_transform(y.values.reshape(-1, 1)).flatten()
+    Args:
+        data (pd.DataFrame): The input data.
+        feature_columns (list): List of feature columns to be
+        used in the model.
+        categorical_features (list): List of categorical feature columns.
+        use_gridsearch (bool): Whether to use GridSearch for
+        hyperparameter tuning.
+
+    Returns:
+        pd.DataFrame: DataFrame containing the evaluation metrics
+        of the trained models.
+    """
+
+    # Split the data
+    X = data[feature_columns]
+    y = data['FutureSpend'].values.reshape(-1, 1)
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y_scaled, test_size=0.2, random_state=1)
+        X, y, test_size=0.2, random_state=1)
 
+    # Scale the target variable
+    y_scaler = StandardScaler()
+    y_train_scaled = y_scaler.fit_transform(y_train)
+    y_test_scaled = y_scaler.transform(y_test)
+
+    # Preproccess the features
     preprocessor = preprocess_data(data, feature_columns, categorical_features)
 
-    # Model setup
+    # Define models
     models = {
         'Linear Regression': LinearRegression(n_jobs=-1),
         'Random Forest': RandomForestRegressor(
             random_state=1,
-            verbose=1,
+            # verbose=1,
             n_jobs=-1
         ),
         'Gradient Boosting': GradientBoostingRegressor(
             random_state=1,
-            verbose=1,
+            # verbose=1,
         )}
-    # Setting parameter grid for each model
+
+    # Hyperparameter grids
     param_grids = {
         'Random Forest': {
-            'model__n_estimators': [5, 10, 50, 100, 250, 500, 750, 1000],
-            'model__max_depth': [2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, None],
-            # 'model__n_estimators': [200, 300],
-            # 'model__max_depth': [10, 15],
-            'model__min_samples_split': [2, 4]
+            'model__n_estimators': [250, 300, 350],
+            'model__max_depth': [10, 15, 20],
+            'model__min_samples_split': [4, 5, 6]
         },
         'Gradient Boosting': {
-            'model__n_estimators': [5, 10, 50, 100, 250, 500, 750, 1000],
-            'model__max_depth': [2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20, 25, 30, None],
-            'model__min_samples_split': [2, 4]
+            'model__n_estimators': [250, 300, 350],
+            'model__learning_rate': [0.09, 0.1, 0.11],
+            'model__max_depth': [2, 4, 6],
+            'model__min_samples_split': [2, 3, 4]
 
-            # 'model__n_estimators': [200, 300],
-            # 'model__learning_rate': [0.01, 0.05],
-            # 'model__max_depth': [2, 4]
         }
     }
 
@@ -157,8 +189,8 @@ def run_models(
         model_path = f'{model_dir}{name}.pkl'
         if os.path.exists(model_path):
             with open(model_path, 'rb') as f:
-                pipeline = pickle.load(f)
-            print(f"Loaded {name} from pickle.\n")
+                pipeline, y_scaler = pickle.load(f)
+            print(f"Loaded {name} and scaler from pickle.\n")
         else:
             pipeline = Pipeline([
                 ('preprocessor', preprocessor),
@@ -169,28 +201,37 @@ def run_models(
                 random_search = RandomizedSearchCV(
                     pipeline, param_grids[name],
                     cv=5, scoring='neg_mean_squared_error',
-                    n_jobs=-1, verbose=1)
+                    n_jobs=-1)
 
-                random_search.fit(X_train, y_train)
+                random_search.fit(X_train, y_train_scaled.ravel())
                 pipeline = random_search.best_estimator_
+                best_params = random_search.best_params_
+                try:
+                    best_params_df = pd.DataFrame([best_params])
+                    best_params_df.to_csv(
+                        f"{csv_dir}best_parameters_{name}.csv")
+                except Exception as e:
+                    print(f"Saving csv failed..{e}")
+
                 print(
                     f"Best parameters for {name}: {random_search.best_params_}")
+
             else:
-                pipeline.fit(X_train, y_train)
+                pipeline.fit(X_train, y_train_scaled.ravel())
 
             with open(model_path, 'wb') as f:
-                pickle.dump(pipeline, f)
-            print(f"Saved {name} model to pickle.")
+                pickle.dump((pipeline, y_scaler), f)
+            print(f"Saved {name} model and scaler to pickle.")
 
         # Predictions and evaluations
-        y_pred = pipeline.predict(X_test)
-        y_pred_inverse = y_scaler.inverse_transform(
-            y_pred.reshape(-1, 1)).flatten()
-        y_test_inverse = y_scaler.inverse_transform(
-            y_test.reshape(-1, 1)).flatten()
+        y_pred_scaled = pipeline.predict(X_test)
+        y_pred = y_scaler.inverse_transform(
+            y_pred_scaled.reshape(-1, 1)).flatten()
+        y_test_original = y_scaler.inverse_transform(
+            y_test_scaled.reshape(-1, 1)).flatten()
 
-        mse = mean_squared_error(y_test_inverse, y_pred_inverse)
-        r2 = r2_score(y_test_inverse, y_pred_inverse)
+        mse = mean_squared_error(y_test_original, y_pred)
+        r2 = r2_score(y_test_original, y_pred)
         result = {'Model': name, 'Test MSE': mse, 'R-squared': r2}
 
         # Feature importances for applicable models
@@ -223,6 +264,19 @@ def run_models(
 
 
 def make_predictions(data, feature_columns):
+    """
+    Make predictions using pre-trained models and inverse
+    transform the scaled predictions.
+
+    Args:
+        data (pd.DataFrame): The input data.
+        feature_columns (list): List of feature columns to be used
+        for making predictions.
+
+    Returns:
+        pd.DataFrame: DataFrame with predictions added.
+    """
+
     model_names = ['Linear Regression', 'Random Forest', 'Gradient Boosting']
     predictions = {}
 
@@ -230,11 +284,14 @@ def make_predictions(data, feature_columns):
         model_path = f'{model_dir}{name}.pkl'
         if os.path.exists(model_path):
             with open(model_path, 'rb') as f:
-                pipeline = pickle.load(f)
-            print(f"Loaded {name} from pickle.\n")
+                pipeline, y_scaler = pickle.load(f)
+            print(f"Loaded {name} and scaler from pickle.\n")
 
             X = data[feature_columns]
-            y_pred = pipeline.predict(X).round(2)
+            y_pred_scaled = pipeline.predict(X).reshape(-1, 1)
+            y_pred = y_scaler.inverse_transform(
+                y_pred_scaled).flatten()
+
             # Clip negative predictions
             y_pred = [max(0, pred) for pred in y_pred]
 
@@ -273,7 +330,8 @@ def cross_val_performance(data, feature_columns, categorical_features):
         mse_scores = -scores
         result = {
             'Model': name,
-            'Cross-Validation MSE Scores': ', '.join(f'{score:.2f}' for score in mse_scores),
+            'Cross-Validation MSE Scores': ', '.join(
+                f'{score:.2f}' for score in mse_scores),
             'Mean CV MSE': mse_scores.mean(),
             'Std CV MSE': mse_scores.std()
         }
@@ -295,31 +353,19 @@ def cross_val_performance(data, feature_columns, categorical_features):
     return results_df
 
 
-def plot_feature_importances(importances, title):
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.barplot(x=list(importances.values()), y=list(
-        importances.keys()), color='darkblue')
-    ax.set_title(title)
-    ax.set_xlabel('Importance')
-    ax.set_ylabel('Feature')
-    fig.tight_layout()
-    fig.savefig(f"{plot_dir}{title}.png", dpi=300,
-                format='png', bbox_inches='tight')
-    plt.close(fig)
-
-
 def prepare_final_output(results):
     final_columns = [
-        'InvoiceDate', 'Invoice', 'Customer ID', 'Country',
-        'StockCode', 'Description', 'Quantity', 'Price',
+        'Customer ID', 'Country',
+        'Quantity', 'Price',
         'ClusterGroup', 'R_Score', 'F_Score', 'M_Score',
         'RFM_Level', 'Linear Regression_Predictions',
         'Gradient Boosting_Predictions',
         'Random Forest_Predictions'
     ]
 
-    rule_columns = [col for col in results.columns if col.startswith('Rule_')]
-    final_columns.extend(rule_columns)
+    # rule_columns = [col for col in results.columns if col.startswith('Rule_')]
+    # final_columns.extend(rule_columns)
+    results['Quantity'] = results['Quantity'].round(2)
     final_data = results[final_columns]
 
     final_data.to_csv(f"{csv_dir}final_customer_insights.csv", index=False)
@@ -327,11 +373,31 @@ def prepare_final_output(results):
         f"Final customer insights saved to {csv_dir}final_customer_insights.csv")
 
 
-def visualize_predictions(data):
-    total_income_past = data['Price'].sum()
-    total_predicted_future_spend = data['Random Forest_Predictions'].sum()
+def visualize_predictions(validation_data, predictions):
+    """
+    Visualize the comparison of total income from the past two years with
+    predicted future spend.
+
+    Args:
+        validation_data (pd.DataFrame): The validation data with predictions.
+        predictions (pd.DataFrame): The DataFrame containing predictions.
+
+    Returns:
+        None
+    """
+
+    # Combining predictions with validation data
+    validation_data = validation_data.copy()
+    validation_data['Random Forest_Predictions'] = predictions['Random Forest_Predictions']
+    validation_data['Linear Regression_Predictions'] = predictions['Linear Regression_Predictions']
+    validation_data['Gradient Boosting_Predictions'] = predictions['Gradient Boosting_Predictions']
+
+    total_income_past = validation_data['Price'].sum()
+    total_predicted_future_spend = validation_data['Random Forest_Predictions'].sum(
+    )
+
     # Print the sums for confirmation
-    print(f"Total Income for Past Two Years: {total_income_past}")
+    print(f"Total Income in validation data: {total_income_past}")
     print(f"Total Predicted Future Spend: {total_predicted_future_spend}")
 
     # Creating a DataFrame for plotting
@@ -342,23 +408,11 @@ def visualize_predictions(data):
 
     # Check the basic statistics of the predictions
     print("Linear Regression:\n",
-          data['Linear Regression_Predictions'].describe())
-    print("Random Forest:\n", data['Random Forest_Predictions'].describe())
+          validation_data['Linear Regression_Predictions'].describe())
+    print("Random Forest:\n",
+          validation_data['Random Forest_Predictions'].describe())
     print("Gradient Boosting:\n",
-          data['Gradient Boosting_Predictions'].describe())
-
-    # # Set the cap value to the 99th percentile
-    # cap_value = data['Random Forest_Predictions'].quantile(0.99)
-    # data['Random Forest_Predictions_Capped'] = np.clip(
-    #     data['Random Forest_Predictions'], 0, cap_value)
-    #
-    # # Check the new summary statistics after capping
-    # print("Capped:\n", data['Random Forest_Predictions_Capped'].describe())
-    #
-    # # Identify predictions that are significantly higher than the rest
-    # outliers = data[data['Random Forest_Predictions'] >
-    #                 data['Random Forest_Predictions'].quantile(0.99)]
-    # print("Outliers:\n", outliers[['Random Forest_Predictions']].describe())
+          validation_data['Gradient Boosting_Predictions'].describe())
 
     fig, ax = plt.subplots(figsize=(10, 6))
     sns.barplot(x='Period', y='Total Spend',
@@ -374,38 +428,72 @@ def visualize_predictions(data):
     plt.show()
 
 
-def transform_features(data):
-    # Log transformation for Quantity and Price to handle skewness
-    data['Log_Quantity'] = np.log1p(data['Quantity'])
-    data['Log_Price'] = np.log1p(data['Price'])
+def cap_outliers(data, feature, lower_percentile=0.015, upper_percentile=0.98):
+    """
+    Cap outliers in a given feature based on specified percentiles.
 
-    # Binning the TimeOfDay into categories (e.g., morning, afternoon, evening)
-    bins = [0, 6, 12, 18, 24]
-    labels = ['Night', 'Morning', 'Afternoon', 'Evening']
-    data['TimeOfDay_Binned'] = pd.cut(
-        data['TimeOfDay'], bins=bins, labels=labels, right=False)
+    Args:
+        data (pd.DataFrame): The input data.
+        feature (str): The feature to cap outliers for.
+        lower_percentile (float): The lower percentile for capping.
+        upper_percentile (float): The upper percentile for capping.
+
+    Returns:
+        pd.DataFrame: The data with outliers capped.
+    """
+    lower_threshold = data[feature].quantile(lower_percentile)
+    upper_threshold = data[feature].quantile(upper_percentile)
+
+    data[feature] = np.where(
+        data[feature] < lower_threshold, lower_threshold, data[feature])
+    data[feature] = np.where(
+        data[feature] > upper_threshold, upper_threshold, data[feature])
+
+    print("Outliers capped!")
 
     return data
 
 
 def main():
-    training_data = pd.read_csv(f"{csv_dir}training_data.csv")
-    complete_data = pd.read_csv(f"{csv_dir}data.csv")
+    """
+    Main function to execute the data pipeline, including preprocessing,
+    feature engineering, model training, and evaluation.
 
-    # Apply transformations
-    transformed_training_data = transform_features(training_data)
-    transformed_complete_data = transform_features(complete_data)
+    Returns:
+        None
+    """
+    # Load the data
+    train_data = pd.read_csv(f"{csv_dir}train_data.csv")
+    validation_data = pd.read_csv(f"{csv_dir}validation_data.csv")
 
+    # Generating target column
+    train_data['FutureSpend'] = train_data['Quantity'] * train_data['Price']
+    train_data['FutureSpend'] = train_data['FutureSpend'].round(2)
+
+    columns_to_cap = ['Quantity', 'R_Score', 'F_Score', 'M_Score', 'Price']
+    # Capping outliers in train data
+    for column in columns_to_cap:
+        train_data = cap_outliers(train_data, column)
+
+    # Capping outliers in validation data
+    for column in columns_to_cap:
+        validation_data = cap_outliers(validation_data, column)
+
+    # Target feature not included here.
     feature_columns = [
         'RFM_Level', 'ClusterGroup', 'R_Score', 'F_Score',
-        'M_Score', 'Log_Quantity', 'Log_Price', 'Month', 'DayOfWeek', 'TimeOfDay_Binned'
+        'M_Score', 'Quantity', 'Price',
+        'Month', 'DayOfWeek', 'TimeOfDay'
     ]
 
     categorical_features = [
         'RFM_Level',
         'ClusterGroup',
-        'TimeOfDay_Binned'
     ]
+
+    # Check data distribution
+    check_data_distribution(
+        train_data, feature_columns, categorical_features)
 
     # Uncomment below to run cross-validation performance check
     # cross_val_performance(
@@ -414,18 +502,14 @@ def main():
     # Run models with or without GridSearch
     # Set use_gridsearch to True to use it.
     run_models(
-        training_data, feature_columns,
+        train_data, feature_columns,
         categorical_features, use_gridsearch=True)
 
-    # Check data distribution
-    check_data_distribution(
-        complete_data, feature_columns, categorical_features)
-
     # Predict future spending
-    results = make_predictions(complete_data, feature_columns)
+    predictions = make_predictions(validation_data, feature_columns)
 
-    prepare_final_output(results)
-    visualize_predictions(results)
+    # prepare_final_output(results)
+    visualize_predictions(validation_data, predictions)
 
 
 if __name__ == '__main__':

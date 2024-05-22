@@ -23,6 +23,7 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
+from sklearn.model_selection import train_test_split
 
 
 # Setting up paths
@@ -354,8 +355,8 @@ def aggregate_data(data):
         'Quantity': 'sum',
         'Price': 'sum',
         'R_Score': 'mean',
-        'F_Score': 'sum',
-        'M_Score': 'sum',
+        'F_Score': 'mean',
+        'M_Score': 'mean',
         'RFM_Level': 'first',
         'Month': 'first',
         'DayOfWeek': 'first',
@@ -368,21 +369,24 @@ def aggregate_data(data):
     for rule in rule_columns:
         aggregation_methods[rule] = 'max'
 
+    # Include any other columns that should be retained
+    other_columns = [
+        col for col in data.columns if col not in aggregation_methods and col not in rule_columns and col != 'Customer ID']
+    for col in other_columns:
+        aggregation_methods[col] = 'first'
+
     # Aggregating data
     aggregated_data = data.groupby(
         'Customer ID').agg(aggregation_methods).reset_index()
 
     # Create a new column to indicate if any rules are connected to customer
-    aggregated_data['Has_Rule'] = aggregated_data[rule_columns].max(axis=1)
+    # aggregated_data['Has_Rule'] = aggregated_data[rule_columns].max(axis=1)
 
-    # Ensure the aggregated data contains the original columns
-    relevant_columns = aggregated_data.columns.tolist()
+    print("Aggregated data shape:\n", aggregated_data.shape)
 
-    # Set the columns of aggregated_data
-    aggregated_data.columns = relevant_columns
-
-    print("Aggregted data shape:\n", aggregated_data.shape)
-
+    print("Agg data:\n", aggregated_data.head())
+    print("Agg data shape:\n", aggregated_data.shape)
+    # aggregated_data.to_csv("agg_data.csv", index=False)
     return aggregated_data
 
 
@@ -409,9 +413,9 @@ def kMeans_clustering(data):
         # Defining columns for different preprocessing.
         categorical_cols = ['Country']
         numeric_cols = ['Quantity', 'Price', 'Month', 'DayOfWeek',
-                        'TimeOfDay', 'R_Score', 'F_Score', 'M_Score',
-                        'Has_Rule']
-        # rule_lift_cols = [col for col in data.columns if 'Rule_' in col]
+                        'TimeOfDay', 'R_Score', 'F_Score', 'M_Score'
+                        ]
+        # rule_cols = [col for col in data.columns if 'Rule_' in col]
 
         # Preproccessing pipeline
         preprocessor = ColumnTransformer(
@@ -470,7 +474,7 @@ def kMeans_clustering(data):
         plt.close('all')
 
         column_order = [
-
+            'InvoiceDate',
             'Customer ID',
             'Country',
             'Month',
@@ -483,11 +487,10 @@ def kMeans_clustering(data):
             'M_Score',
             'RFM_Level',
             'ClusterGroup',
-            'Has_Rule'
         ]
 
         # rule_columns = [
-        #     col for col in data.columns if 'Rule_' in col]
+        # col for col in data.columns if 'Rule_' in col]
 
         # column_order = base_columns + sorted(rule_columns)
         data = data[column_order]
@@ -500,12 +503,46 @@ def kMeans_clustering(data):
         print("Silhoutte:\n", silhouette)
         print("\nClustering executed successfully.\n")
 
-        data.to_csv(f"{csv_dir}data.csv", index=False)
+        data.to_csv(f"{csv_dir}clustered_data.csv", index=False)
 
         return data
     except Exception as e:
         print(f"An error occurred: {e}")
         return None
+
+
+def split_data(data):
+    """
+    Split the data into training and validation sets.
+
+    Args:
+        data (pd.DataFrame): The input data.
+
+    Returns:
+        None
+    """
+    # train_data, validation_data = train_test_split(
+    #     data, test_size=0.2, random_state=1)
+
+    cutoff_date = pd.to_datetime('2010-12-01')
+    train_data = data[data['InvoiceDate'] < cutoff_date]
+    validation_data = data[data['InvoiceDate'] >= cutoff_date]
+
+    numeric_cols_train = train_data.select_dtypes(include=['number']).columns
+    train_data.loc[:, numeric_cols_train] = train_data[numeric_cols_train].round(
+        2)
+
+    numeric_cols_val = validation_data.select_dtypes(
+        include=['number']).columns
+    validation_data.loc[:, numeric_cols_val] = validation_data[numeric_cols_val].round(
+        2)
+
+    # train_data.to_csv(f"{csv_dir}train_data.csv", index=False)
+    # validation_data.to_csv(f"{csv_dir}validation_data.csv", index=False)
+
+    # print(f"Training data and validation data saved to {csv_dir}")
+
+    return train_data, validation_data
 
 
 def main():
@@ -527,14 +564,26 @@ def main():
 
     data = preprocess_data()
 
+    # Generate Recency, Frequency and Monetary values
     data_rfm = rfm_analysis(data)
 
+    # Generat apriori rules
     data_rfm_and_apriori_rules = market_basket_analysis(
         data_rfm)
 
-    aggregated_data = aggregate_data(data_rfm_and_apriori_rules)
+    # Clustering
+    clustering_results = kMeans_clustering(data_rfm_and_apriori_rules)
 
-    kMeans_clustering(aggregated_data)
+    # Split the data
+    train_data, validation_data = split_data(data_rfm_and_apriori_rules)
+
+    # Aggregate the data
+    train_agg_data = aggregate_data(clustering_results)
+    validation_agg_data = aggregate_data(clustering_results)
+
+    # Save aggregated data
+    train_agg_data.to_csv(f'{csv_dir}train_data.csv', index=False)
+    validation_agg_data.to_csv(f'{csv_dir}validation_data.csv', index=False)
 
 
 if __name__ == "__main__":
