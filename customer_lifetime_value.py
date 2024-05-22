@@ -102,6 +102,15 @@ def preprocess_data(data, feature_columns, categorical_features):
     """Function for preprocessing of data.
     Returns preprocessor
     """
+    # categorical_features = [
+    #     'RFM_Level',
+    #     'ClusterGroup',
+    #     'Country',
+    # ]
+    # excluded_features = ['FutureSpend', 'InvoiceDate', 'Customer ID']
+    # numerical_features = [
+    #     col for col in data.columns if col not in categorical_features and col not in excluded_features]
+
     numerical_features = [
         col for col in feature_columns if col not in categorical_features]
 
@@ -141,7 +150,7 @@ def run_models(
 
     # Split the data
     X = data[feature_columns]
-    y = data['FutureSpend'].values.reshape(-1, 1)
+    y = data['TotalSpend'].values.reshape(-1, 1)
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=1)
@@ -176,9 +185,9 @@ def run_models(
         },
         'Gradient Boosting': {
             'model__n_estimators': [250, 300, 350],
-            'model__learning_rate': [0.09, 0.1, 0.11],
-            'model__max_depth': [2, 4, 6],
-            'model__min_samples_split': [2, 3, 4]
+            'model__learning_rate': [0.1, 0.11, 0.12],
+            'model__max_depth': [1, 2, 4],
+            'model__min_samples_split': [3, 4, 5]
 
         }
     }
@@ -386,24 +395,25 @@ def visualize_predictions(validation_data, predictions):
         None
     """
 
-    # Combining predictions with validation data
     validation_data = validation_data.copy()
+
+    # Combining predictions with validation data
     validation_data['Random Forest_Predictions'] = predictions['Random Forest_Predictions']
     validation_data['Linear Regression_Predictions'] = predictions['Linear Regression_Predictions']
     validation_data['Gradient Boosting_Predictions'] = predictions['Gradient Boosting_Predictions']
 
-    total_income_past = validation_data['Price'].sum()
+    total_income_val_data = validation_data['TotalSpend'].sum()
     total_predicted_future_spend = validation_data['Random Forest_Predictions'].sum(
     )
 
     # Print the sums for confirmation
-    print(f"Total Income in validation data: {total_income_past}")
+    print(f"Total Income in validation data: {total_income_val_data}")
     print(f"Total Predicted Future Spend: {total_predicted_future_spend}")
 
     # Creating a DataFrame for plotting
     comparison_data = pd.DataFrame({
-        'Period': ['Past Two Years', 'Predicted Next Year'],
-        'Total Spend': [total_income_past, total_predicted_future_spend]
+        'Period': ['2009-2010', 'Predicted 2010-2011'],
+        'Total Spend': [total_income_val_data, total_predicted_future_spend]
     })
 
     # Check the basic statistics of the predictions
@@ -418,7 +428,7 @@ def visualize_predictions(validation_data, predictions):
     sns.barplot(x='Period', y='Total Spend',
                 data=comparison_data, ax=ax, color='darkblue')
     ax.set_title(
-        'Comparison of Total Income: Past Two Years vs. Predicted Next Year')
+        'Comparison of Total Income: 2009-2010 vs. Predicted 2010-2011')
     ax.set_ylabel('Total Spend')
     ax.set_xlabel('Period')
 
@@ -428,30 +438,86 @@ def visualize_predictions(validation_data, predictions):
     plt.show()
 
 
-def cap_outliers(data, feature, lower_percentile=0.015, upper_percentile=0.98):
+# def cap_outliers(data, feature, lower_percentile=0.015, upper_percentile=0.98):
+#     """
+#     Cap outliers in a given feature based on specified percentiles.
+#
+#     Args:
+#         data (pd.DataFrame): The input data.
+#         feature (str): The feature to cap outliers for.
+#         lower_percentile (float): The lower percentile for capping.
+#         upper_percentile (float): The upper percentile for capping.
+#
+#     Returns:
+#         pd.DataFrame: The data with outliers capped.
+#     """
+#     lower_threshold = data[feature].quantile(lower_percentile)
+#     upper_threshold = data[feature].quantile(upper_percentile)
+#
+#     data[feature] = np.where(
+#         data[feature] < lower_threshold, lower_threshold, data[feature])
+#     data[feature] = np.where(
+#         data[feature] > upper_threshold, upper_threshold, data[feature])
+#
+#     print("Outliers capped!")
+#
+#     return data
+
+
+def run_random_forest(data):
     """
-    Cap outliers in a given feature based on specified percentiles.
+    Train, evaluate, and predict using a Random Forest model without scaling.
 
     Args:
         data (pd.DataFrame): The input data.
-        feature (str): The feature to cap outliers for.
-        lower_percentile (float): The lower percentile for capping.
-        upper_percentile (float): The upper percentile for capping.
+        feature_columns (list): List of feature columns to be used in the model.
+        target_column (str): The name of the target column.
 
     Returns:
-        pd.DataFrame: The data with outliers capped.
+        dict: A dictionary containing model evaluation metrics.
+        RandomForestRegressor: The trained Random Forest model.
     """
-    lower_threshold = data[feature].quantile(lower_percentile)
-    upper_threshold = data[feature].quantile(upper_percentile)
 
-    data[feature] = np.where(
-        data[feature] < lower_threshold, lower_threshold, data[feature])
-    data[feature] = np.where(
-        data[feature] > upper_threshold, upper_threshold, data[feature])
+    customer_id = data['Customer ID']
+    data = data.drop(columns=['InvoiceDate'])
 
-    print("Outliers capped!")
+    preprocessor = preprocess_data(data)
+    data_transformed = preprocessor.fit_transform(data)
 
-    return data
+    if hasattr(data_transformed, "toarray"):
+        data_transformed = data_transformed.toarray()
+
+    # Split the data into training and testing sets
+    X = data[data_transformed]
+    y = data['FutureSpend'].values
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=1)
+
+    # Initialize the Random Forest model
+    model = RandomForestRegressor(random_state=1, n_jobs=-1)
+
+    # Train the model
+    model.fit(X_train, y_train)
+
+    # Make predictions
+    y_pred = model.predict(X_test)
+
+    # Evaluate the model
+    mse = mean_squared_error(y_test, y_pred)
+    r2 = r2_score(y_test, y_pred)
+
+    # Print evaluation metrics
+    print(f"Test MSE: {mse}")
+    print(f"R-squared: {r2}")
+
+    # Return evaluation metrics and the trained model
+    return {
+        'Test MSE': mse,
+        'R-squared': r2,
+        'Model': model,
+        'Customer_IDs': customer_id.iloc[X_test.indices]
+    }
 
 
 def main():
@@ -466,18 +532,25 @@ def main():
     train_data = pd.read_csv(f"{csv_dir}train_data.csv")
     validation_data = pd.read_csv(f"{csv_dir}validation_data.csv")
 
+    print("columns train data:\n", train_data.columns)
+    print("columns validation data:\n", validation_data.columns)
+    # # Converting to datetime
+    # train_data['InvoiceDate'] = pd.to_datetime(train_data['InvoiceDate'])
+    # validation_data['InvoiceDate'] = pd.to_datetime(
+    #     validation_data['InvoiceDate'])
+
     # Generating target column
-    train_data['FutureSpend'] = train_data['Quantity'] * train_data['Price']
-    train_data['FutureSpend'] = train_data['FutureSpend'].round(2)
+    # train_data['TotalSpend'] = train_data['Quantity'] * train_data['Price']
+    # train_data['TotalSpend'] = train_data['TotalSpend'].round(2)
 
-    columns_to_cap = ['Quantity', 'R_Score', 'F_Score', 'M_Score', 'Price']
-    # Capping outliers in train data
-    for column in columns_to_cap:
-        train_data = cap_outliers(train_data, column)
-
-    # Capping outliers in validation data
-    for column in columns_to_cap:
-        validation_data = cap_outliers(validation_data, column)
+    # columns_to_cap = ['Quantity', 'R_Score', 'F_Score', 'M_Score', 'Price']
+    # # Capping outliers in train data
+    # for column in columns_to_cap:
+    #     train_data = cap_outliers(train_data, column)
+    #
+    # # Capping outliers in validation data
+    # for column in columns_to_cap:
+    #     validation_data = cap_outliers(validation_data, column)
 
     # Target feature not included here.
     feature_columns = [
@@ -492,8 +565,8 @@ def main():
     ]
 
     # Check data distribution
-    check_data_distribution(
-        train_data, feature_columns, categorical_features)
+    # check_data_distribution(
+    #     train_data)
 
     # Uncomment below to run cross-validation performance check
     # cross_val_performance(
@@ -502,8 +575,10 @@ def main():
     # Run models with or without GridSearch
     # Set use_gridsearch to True to use it.
     run_models(
-        train_data, feature_columns,
-        categorical_features, use_gridsearch=True)
+        train_data, feature_columns, categorical_features, use_gridsearch=True)
+
+    # results_random_forest = run_random_forest(train_data)
+    # print("Results:\n", results_random_forest)
 
     # Predict future spending
     predictions = make_predictions(validation_data, feature_columns)

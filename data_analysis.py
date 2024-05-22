@@ -76,9 +76,13 @@ def preprocess_data():
 
     # Converting from string to datetime
     data['InvoiceDate'] = pd.to_datetime(data['InvoiceDate'])
+    # Create time features
     data['Month'] = data['InvoiceDate'].dt.month
     data['DayOfWeek'] = data['InvoiceDate'].dt.dayofweek
     data['TimeOfDay'] = data['InvoiceDate'].dt.hour
+
+    # Add total spend column
+    data['TotalSpend'] = data['Quantity'] * data['Price']
 
     # Display unique customers
     unique_customers = data['Customer ID'].nunique()
@@ -137,7 +141,7 @@ def preprocess_data():
         'InvoiceDate', 'Invoice',
         'StockCode', 'StockCodeVariation', 'Description',
         'Month', 'DayOfWeek', 'TimeOfDay',
-        'Quantity', 'Price'
+        'Quantity', 'Price', 'TotalSpend'
     ]
 
     data = data[column_order]
@@ -353,7 +357,7 @@ def aggregate_data(data):
     aggregation_methods = {
         'Country': 'first',
         'Quantity': 'sum',
-        'Price': 'sum',
+        'TotalSpend': 'sum',
         'R_Score': 'mean',
         'F_Score': 'mean',
         'M_Score': 'mean',
@@ -413,8 +417,8 @@ def kMeans_clustering(data):
         # Defining columns for different preprocessing.
         categorical_cols = ['Country']
         numeric_cols = ['Quantity', 'Price', 'Month', 'DayOfWeek',
-                        'TimeOfDay', 'R_Score', 'F_Score', 'M_Score'
-                        ]
+                        'TimeOfDay', 'R_Score', 'F_Score', 'M_Score',
+                        'TotalSpend']
         # rule_cols = [col for col in data.columns if 'Rule_' in col]
 
         # Preproccessing pipeline
@@ -482,6 +486,7 @@ def kMeans_clustering(data):
             'TimeOfDay',
             'Quantity',
             'Price',
+            'TotalSpend',
             'R_Score',
             'F_Score',
             'M_Score',
@@ -528,15 +533,6 @@ def split_data(data):
     train_data = data[data['InvoiceDate'] < cutoff_date]
     validation_data = data[data['InvoiceDate'] >= cutoff_date]
 
-    numeric_cols_train = train_data.select_dtypes(include=['number']).columns
-    train_data.loc[:, numeric_cols_train] = train_data[numeric_cols_train].round(
-        2)
-
-    numeric_cols_val = validation_data.select_dtypes(
-        include=['number']).columns
-    validation_data.loc[:, numeric_cols_val] = validation_data[numeric_cols_val].round(
-        2)
-
     # train_data.to_csv(f"{csv_dir}train_data.csv", index=False)
     # validation_data.to_csv(f"{csv_dir}validation_data.csv", index=False)
 
@@ -580,6 +576,16 @@ def main():
     # Aggregate the data
     train_agg_data = aggregate_data(clustering_results)
     validation_agg_data = aggregate_data(clustering_results)
+
+    numeric_cols_train = train_agg_data.select_dtypes(
+        include=['number']).columns
+    train_agg_data.loc[:, numeric_cols_train] = train_agg_data[numeric_cols_train].round(
+        2)
+
+    numeric_cols_val = validation_agg_data.select_dtypes(
+        include=['number']).columns
+    validation_agg_data.loc[:, numeric_cols_val] = validation_agg_data[numeric_cols_val].round(
+        2)
 
     # Save aggregated data
     train_agg_data.to_csv(f'{csv_dir}train_data.csv', index=False)
