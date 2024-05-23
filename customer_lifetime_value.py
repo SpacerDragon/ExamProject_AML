@@ -52,7 +52,7 @@ def check_data_distribution(data, feature_columns, categorical_features):
           data[feature_columns].describe())
 
     numerical_features = [
-        col for col in feature_columns if col not in categorical_features]
+        col for col in feature_columns if col not in categorical_features and not col.startswith('Rule_')]
 
     num_features = len(numerical_features)
     num_cols = 3
@@ -150,7 +150,7 @@ def run_models(
 
     # Split the data
     X = data[feature_columns]
-    y = data['TotalSpend'].values.reshape(-1, 1)
+    y = data['CLV'].values.reshape(-1, 1)
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=1)
@@ -344,7 +344,7 @@ def make_predictions(data, feature_columns, best_model):
 def prepare_final_output(results):
     """
     Main function to execute the data pipeline, including preprocessing,
-    feature engineering, model training, and evaluation.
+    feature engineering and model training.
 
     Returns:
         None
@@ -352,7 +352,7 @@ def prepare_final_output(results):
     final_columns = [
         'Customer ID', 'Country', 'Has_Rule',
         'R_Score', 'F_Score',
-        'M_Score', 'RFM_Level', 'TotalSpend'
+        'M_Score', 'RFM_Level'
     ]
     prediction_column = [
         col for col in results.columns if '_Predictions' in col]
@@ -368,76 +368,29 @@ def prepare_final_output(results):
         f"Final customer insights saved to {csv_dir}final_customer_insights.csv")
 
 
-def visualize_predictions(validation_data, predictions, best_model):
+def visualize_predictions(predictions):
     """
-    Visualize the comparison of total income from the past two years with
-    predicted future spend.
+    Plot the top N customers by predicted CLV.
 
     Args:
-        validation_data (pd.DataFrame): The validation data with predictions.
         predictions (pd.DataFrame): The DataFrame containing predictions.
+        top_n (int): The number of top customers to display.
 
     Returns:
         None
     """
+    top_n = 10
+    top_customers = predictions.nlargest(
+        top_n, 'CLV').sort_values(by='CLV', ascending=False)
+    plt.figure(figsize=(10, 6))
 
-    validation_data = validation_data.copy(deep=True)
-
-    # Identify the prediction column
-    prediction_column = [
-        col for col in validation_data.columns if '_Predictions' in col][0]
-
-    total_income_val_data = validation_data['TotalSpend'].sum()
-    total_predicted_future_spend = validation_data[prediction_column].sum()
-
-    # Print the sums for confirmation
-    print(f"Total Income in validation data: {total_income_val_data}")
-    print(f"Total Predicted Future Spend: {total_predicted_future_spend}")
-
-    # Creating a DataFrame for plotting barplot
-    comparison_data = pd.DataFrame({
-        'Period': ['2010-2011', 'Predicted 2010-2011'],
-        'Total Spend': [total_income_val_data, total_predicted_future_spend],
-    })
-
-    colors = ['darkblue', 'red']
-
-    # Comparing sum of totalspend and sum of predictions
-    fig, ax = plt.subplots(figsize=(10, 6))
-    sns.barplot(x='Period', y='Total Spend',
-                data=comparison_data,
-                ax=ax,
-                hue='Period', palette=colors, dodge=False, legend=False)
-    ax.set_title(
-        f'Comparison of Total Income: Actual spend 2010-2011 vs. Predicted 2010-2011\nModel {best_model}')
-    ax.set_ylabel('Total Spend')
-    ax.set_xlabel('Compare facts against predictions')
-
-    # Save and show the plot
-    fig.tight_layout()
-    plt.savefig(f"{plot_dir}total_income_comparison.png")
-
-    # Time series plot
-    validation_data['InvoiceDate'] = pd.to_datetime(
-        validation_data['InvoiceDate'])
-    validation_data.set_index('InvoiceDate', inplace=True)
-
-    weekly_actuals = validation_data['TotalSpend'].resample('W').sum()
-    weekly_predictions = validation_data[prediction_column].resample('W').sum()
-
-    fig, ax = plt.subplots(figsize=(14, 7))
-    weekly_actuals.plot(ax=ax, label='Actual Spend', color='darkblue')
-    weekly_predictions.plot(ax=ax, label='Predicted Spend', color='red')
-    ax.set_title(
-        f'Weekly Total Spend: Actual vs. Predicted\nModel {best_model}')
-    ax.set_ylabel('Total Spend')
-    ax.set_xlabel('Date')
-    ax.legend()
-
-    # Save and show the plot
-    fig.tight_layout()
-    plt.savefig(f"{plot_dir}weekly_total_income_comparison.png")
-    plt.show()
+    sns.barplot(x=top_customers['Customer ID'].astype(
+        str), y=top_customers['CLV'], palette='viridis', hue=top_customers['Customer ID'].astype(
+        str), legend=False)
+    plt.title(f'Top {top_n} Customers by Predicted CLV')
+    plt.xlabel('Customer ID')
+    plt.ylabel('Predicted CLV')
+    plt.savefig(f"{plot_dir}top_customers_by_clv.png")
 
 
 def main():
@@ -449,28 +402,31 @@ def main():
         None
     """
     # Load the data
-    train_data = pd.read_csv(f"{csv_dir}train_data.csv")
-    validation_data = pd.read_csv(f"{csv_dir}validation_data.csv")
+    data = pd.read_csv(f"{csv_dir}data.csv")
+    # validation_data = pd.read_csv(f"{csv_dir}validation_data.csv")
+
+    # Add clv column
+    data['CLV'] = data['TotalSpend'] * 5
 
     # Target feature not included here.
     base_columns = [
         'RFM_Level', 'R_Score', 'F_Score',
         'M_Score', 'Quantity', 'Price',
         'Month', 'DayOfWeek', 'TimeOfDay',
-        'StockCode', 'Has_Rule'
+        'Has_Rule'
     ]
 
     categorical_features = [
         'RFM_Level',
     ]
 
-    rule_columns = [col for col in train_data.columns if 'Rule_' in col]
+    rule_columns = [col for col in data.columns if 'Rule_' in col]
 
     feature_columns = base_columns + rule_columns
 
     # Check data distribution
     check_data_distribution(
-        train_data, feature_columns, categorical_features)
+        data, feature_columns, categorical_features)
 
     # Initialize best_model
     best_model = None
@@ -479,16 +435,15 @@ def main():
     # GridSearchCV has an integral Cross-Validation.
     # Set use_gridsearch to True to use it.
     training_results_df, best_model = run_models(
-        train_data, feature_columns, categorical_features,
+        data, feature_columns, categorical_features,
         use_gridsearch=True, best_model=best_model)
 
     # Predict future spending
     predictions = make_predictions(
-        validation_data, feature_columns, best_model)
-    print("Predictions:\n", predictions.head())
+        data, feature_columns, best_model)
 
     # Displaying the predictions, and save plots
-    visualize_predictions(validation_data, predictions, best_model)
+    visualize_predictions(predictions)
 
     prepare_final_output(predictions)
 

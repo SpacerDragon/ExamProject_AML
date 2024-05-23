@@ -258,7 +258,7 @@ def market_basket_analysis(data):
 
     try:
         print("Saving rules to file!")
-        confidence_sorted.to_csv(f'{csv_dir}confidence_rules.csv')
+        confidence_sorted.to_csv(f'{csv_dir}confidence_rules.csv', index=False)
         print("Files Saved!")
     except Exception as e:
         print(f"Failed to save the file: {e}")
@@ -542,9 +542,9 @@ def split_data(data):
 
     cutoff_date = pd.to_datetime('2010-12-01')
     train_data = data[data['InvoiceDate'] < cutoff_date]
-    validation_data = data[data['InvoiceDate'] >= cutoff_date]
+    # validation_data = data[data['InvoiceDate'] >= cutoff_date]
 
-    return train_data, validation_data
+    return train_data
 
 
 def main():
@@ -576,26 +576,26 @@ def main():
     # Clustering on the complete dataset
     data_with_clusters = kMeans_clustering(data_rfm_and_apriori_rules)
 
-    # Split the data
-    train_data, validation_data = split_data(data_with_clusters)
+    # Save data
+    train_data = split_data(data_with_clusters)
 
     # Aggregate the data
     train_agg_data = aggregate_data(train_data)
-    validation_agg_data = aggregate_data(validation_data)
+    # validation_agg_data = aggregate_data(validation_data)
 
     # Rounding decimals to 2
     numeric_cols_train = train_agg_data.select_dtypes(
         include=['number']).columns
     train_agg_data.loc[:, numeric_cols_train] = train_agg_data[numeric_cols_train].round(
         2)
-    numeric_cols_val = validation_agg_data.select_dtypes(
-        include=['number']).columns
-    validation_agg_data.loc[:, numeric_cols_val] = validation_agg_data[numeric_cols_val].round(
-        2)
+    # numeric_cols_val = validation_agg_data.select_dtypes(
+    #     include=['number']).columns
+    # validation_agg_data.loc[:, numeric_cols_val] = validation_agg_data[numeric_cols_val].round(
+    #     2)
 
     # Save aggregated data
-    train_agg_data.to_csv(f'{csv_dir}train_data.csv', index=False)
-    validation_agg_data.to_csv(f'{csv_dir}validation_data.csv', index=False)
+    train_agg_data.to_csv(f'{csv_dir}data.csv', index=False)
+    # validation_agg_data.to_csv(f'{csv_dir}validation_data.csv', index=False)
 
 
 if __name__ == "__main__":
