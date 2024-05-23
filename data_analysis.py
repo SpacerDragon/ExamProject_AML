@@ -13,6 +13,7 @@
 
 # Importing necessary libraries
 import os
+import traceback
 import pandas as pd
 from mlxtend.preprocessing import TransactionEncoder
 from mlxtend.frequent_patterns import apriori, association_rules
@@ -66,7 +67,6 @@ def preprocess_data():
 
     # Combine the dataframes
     data = pd.concat([data1, data2])
-    data['InvoiceDate'] = pd.to_datetime(data['InvoiceDate'])
     print("Combined data shape:", data.shape)
 
     # Remove duplicates
@@ -287,7 +287,7 @@ def market_basket_analysis(data):
     for index, rule in top_rules.iterrows():
         antecedents = rule['antecedents']
         consequents = rule['consequents']
-        column_name = f'Rule_{index}_lift'
+        column_name = f'Rule_{index}'
         # Apply rule
         data[column_name] = data['Items'].apply(
             lambda items: apply_rule(items, antecedents, consequents)
@@ -384,28 +384,27 @@ def aggregate_data(data):
         'Customer ID').agg(aggregation_methods).reset_index()
 
     # Create a new column to indicate if any rules are connected to customer
-    # aggregated_data['Has_Rule'] = aggregated_data[rule_columns].max(axis=1)
+    aggregated_data['Has_Rule'] = aggregated_data[rule_columns].max(axis=1)
 
     print("Aggregated data shape:\n", aggregated_data.shape)
-
     print("Agg data:\n", aggregated_data.head())
-    print("Agg data shape:\n", aggregated_data.shape)
-    # aggregated_data.to_csv("agg_data.csv", index=False)
     return aggregated_data
 
 
 def kMeans_clustering(data):
     """
-    Perform KMeans clustering on the aggregated data.
+    Perform KMeans clustering on the data.
 
     Args:
-        data (pd.DataFrame): The aggregated data with relevant columns.
+        data (pd.DataFrame): The data with relevant columns.
 
     Returns:
         pd.DataFrame: The data with cluster labels.
     """
 
     data = data.copy(deep=True)
+
+    print("Top of kmeans columns:\n", data.columns)
 
     # Setting order in rfm_level to get the heatmap correct
     rfm_order = ['High Value', 'Medium Value', 'Low Value']
@@ -419,18 +418,26 @@ def kMeans_clustering(data):
         numeric_cols = ['Quantity', 'Price', 'Month', 'DayOfWeek',
                         'TimeOfDay', 'R_Score', 'F_Score', 'M_Score',
                         'TotalSpend']
-        # rule_cols = [col for col in data.columns if 'Rule_' in col]
+        rule_cols = [col for col in data.columns if 'Rule_' in col]
+
+        required_columns = numeric_cols + categorical_cols + rule_cols
+        missing_columns = [
+            col for col in required_columns if col not in data.columns]
+        if missing_columns:
+            print(f"Missing columns in kmeans:\n{missing_columns}")
+            return None
 
         # Preproccessing pipeline
         preprocessor = ColumnTransformer(
             transformers=[
-                ('num', StandardScaler(), numeric_cols),
+                ('num', StandardScaler(), numeric_cols + rule_cols),
                 ('cat', OneHotEncoder(), categorical_cols),
             ], verbose=True
         )
+        print("before fit_transform:\n", data.head())
 
         data_processed = preprocessor.fit_transform(
-            data[numeric_cols + categorical_cols])
+            data[numeric_cols + rule_cols + categorical_cols])
 
         # Clustering
         kmeans = KMeans(n_clusters=3, random_state=1, verbose=1)
@@ -453,7 +460,7 @@ def kMeans_clustering(data):
         print(data[['Customer ID', 'ClusterGroup']].head(10))
 
         # Including all numeric columns in aggregation
-        numeric_agg_cols = numeric_cols
+        numeric_agg_cols = numeric_cols + rule_cols
         cluster_summary = data.groupby('ClusterGroup')[numeric_agg_cols].agg([
             'mean', 'median']).reset_index()
 
@@ -477,10 +484,14 @@ def kMeans_clustering(data):
 
         plt.close('all')
 
-        column_order = [
-            'InvoiceDate',
+        base_columns = [
             'Customer ID',
             'Country',
+            'InvoiceDate',
+            'Invoice',
+            'StockCode',
+            'StockCodeVariation',
+            'Description',
             'Month',
             'DayOfWeek',
             'TimeOfDay',
@@ -494,10 +505,10 @@ def kMeans_clustering(data):
             'ClusterGroup',
         ]
 
-        # rule_columns = [
-        # col for col in data.columns if 'Rule_' in col]
+        rule_columns = [
+            col for col in data.columns if 'Rule_' in col]
 
-        # column_order = base_columns + sorted(rule_columns)
+        column_order = base_columns + sorted(rule_columns)
         data = data[column_order]
 
         # Round price column to 2 decimals
@@ -513,6 +524,7 @@ def kMeans_clustering(data):
         return data
     except Exception as e:
         print(f"An error occurred: {e}")
+        traceback.print_exc()
         return None
 
 
@@ -526,17 +538,12 @@ def split_data(data):
     Returns:
         None
     """
-    # train_data, validation_data = train_test_split(
-    #     data, test_size=0.2, random_state=1)
+    data = data.copy(deep=True)
+    data.drop(columns=['ClusterGroup'], inplace=True)
 
     cutoff_date = pd.to_datetime('2010-12-01')
     train_data = data[data['InvoiceDate'] < cutoff_date]
     validation_data = data[data['InvoiceDate'] >= cutoff_date]
-
-    # train_data.to_csv(f"{csv_dir}train_data.csv", index=False)
-    # validation_data.to_csv(f"{csv_dir}validation_data.csv", index=False)
-
-    # print(f"Training data and validation data saved to {csv_dir}")
 
     return train_data, validation_data
 
@@ -567,21 +574,25 @@ def main():
     data_rfm_and_apriori_rules = market_basket_analysis(
         data_rfm)
 
-    # Clustering
-    clustering_results = kMeans_clustering(data_rfm_and_apriori_rules)
+    # Clustering on the complete dataset
+    data_with_clusters = kMeans_clustering(data_rfm_and_apriori_rules)
 
     # Split the data
-    train_data, validation_data = split_data(data_rfm_and_apriori_rules)
+    train_data, validation_data = split_data(data_with_clusters)
+
+    # # Clustering on train and validation data
+    # train_data_clustered = kMeans_clustering(train_data)
+    # validation_data_clustered = kMeans_clustering(validation_data)
 
     # Aggregate the data
-    train_agg_data = aggregate_data(clustering_results)
-    validation_agg_data = aggregate_data(clustering_results)
+    train_agg_data = aggregate_data(train_data)
+    validation_agg_data = aggregate_data(validation_data)
 
+    # Rounding decimals to 2
     numeric_cols_train = train_agg_data.select_dtypes(
         include=['number']).columns
     train_agg_data.loc[:, numeric_cols_train] = train_agg_data[numeric_cols_train].round(
         2)
-
     numeric_cols_val = validation_agg_data.select_dtypes(
         include=['number']).columns
     validation_agg_data.loc[:, numeric_cols_val] = validation_agg_data[numeric_cols_val].round(
