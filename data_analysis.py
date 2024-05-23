@@ -24,7 +24,6 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-from sklearn.model_selection import train_test_split
 
 
 # Setting up paths
@@ -42,7 +41,7 @@ def preprocess_data():
     1. Load data from two CSV files.
     2. Combine the data into a single DataFrame.
     3. Remove duplicates.
-    4. Split letter codes from numeric codes in the 'StockCode' column.
+    4. Split letter codes from numeric codes
     5. Remove specific entries and filter out negative quantities and prices.
     6. Handle missing values in 'Customer ID', 'StockCode', and 'Description'
     columns.
@@ -373,7 +372,7 @@ def aggregate_data(data):
     for rule in rule_columns:
         aggregation_methods[rule] = 'max'
 
-    # Include any other columns that should be retained
+    # Including any other columns that should be retained
     other_columns = [
         col for col in data.columns if col not in aggregation_methods and col not in rule_columns and col != 'Customer ID']
     for col in other_columns:
@@ -579,10 +578,6 @@ def main():
 
     # Split the data
     train_data, validation_data = split_data(data_with_clusters)
-
-    # # Clustering on train and validation data
-    # train_data_clustered = kMeans_clustering(train_data)
-    # validation_data_clustered = kMeans_clustering(validation_data)
 
     # Aggregate the data
     train_agg_data = aggregate_data(train_data)
