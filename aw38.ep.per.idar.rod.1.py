@@ -54,8 +54,10 @@ def preprocess_data():
     # Load data from CSV files
     print("Loading data.")
     try:
-        data1 = pd.read_csv("2009-2010.csv", encoding='ISO-8859-1')
-        data2 = pd.read_csv("2010-2011.csv", encoding='ISO-8859-1')
+        data1 = pd.read_csv("aw38.ep.per.idar.rod.3.csv",
+                            encoding='ISO-8859-1')
+        data2 = pd.read_csv("aw38.ep.per.idar.rod.4.csv",
+                            encoding='ISO-8859-1')
     except FileNotFoundError as e:
         print(f"Error loading data files: {e}")
         return None
