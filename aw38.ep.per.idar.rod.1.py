@@ -24,6 +24,7 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
+from sklearn.decomposition import PCA
 
 
 # Setting up paths
@@ -50,6 +51,9 @@ def preprocess_data():
     Returns:
         pd.DataFrame: The cleaned and preprocessed transaction data.
     """
+
+    # Make global variables of data1 and data2
+    global data1, data2
 
     # Load data from CSV files
     print("Loading data.")
@@ -376,7 +380,9 @@ def aggregate_data(data):
 
     # Including any other columns that should be retained
     other_columns = [
-        col for col in data.columns if col not in aggregation_methods and col not in rule_columns and col != 'Customer ID']
+        col for col in data.columns if col not
+        in aggregation_methods and col not in
+        rule_columns and col != 'Customer ID']
     for col in other_columns:
         aggregation_methods[col] = 'first'
 
@@ -404,8 +410,6 @@ def kMeans_clustering(data):
     """
 
     data = data.copy(deep=True)
-
-    print("Top of kmeans columns:\n", data.columns)
 
     # Setting order in rfm_level to get the heatmap correct
     rfm_order = ['High Value', 'Medium Value', 'Low Value']
@@ -483,6 +487,26 @@ def kMeans_clustering(data):
         fig.savefig(f'{plot_dir}heatmap_rfm_clustergroups.png', dpi=300,
                     format='png', bbox_inches='tight')
 
+        # Reducing dimensions with PCA for visualization
+        pca = PCA(n_components=2)
+        pca_result = pca.fit_transform(data_processed)
+        data['PCA1'] = pca_result[:, 0]
+        data['PCA2'] = pca_result[:, 1]
+
+        # Plotting clusters using PCA components
+        fig, ax = plt.subplots(figsize=(10, 8))
+        scatter = ax.scatter(data['PCA1'], data['PCA2'],
+                             c=data['ClusterGroup'], cmap='viridis')
+        legend1 = ax.legend(*scatter.legend_elements(), title="Clusters")
+        ax.add_artist(legend1)
+        ax.set_title('Clusters visualized using PCA')
+        ax.set_xlabel('PCA Component 1')
+        ax.set_ylabel('PCA Component 2')
+        fig.tight_layout()
+
+        fig.savefig(f'{plot_dir}clusters_pca.png', dpi=300,
+                    format='png', bbox_inches='tight')
+
         plt.close('all')
 
         base_columns = [
@@ -520,6 +544,7 @@ def kMeans_clustering(data):
         print("Silhoutte:\n", silhouette)
         print("\nClustering executed successfully.\n")
 
+        data['TotalSpend'] = data['TotalSpend'].round(2)
         data.to_csv(f"{csv_dir}clustered_data.csv", index=False)
 
         return data
@@ -540,7 +565,6 @@ def split_data(data):
         None
     """
     data = data.copy(deep=True)
-    data.drop(columns=['ClusterGroup'], inplace=True)
 
     cutoff_date = pd.to_datetime('2010-12-01')
     train_data = data[data['InvoiceDate'] < cutoff_date]
@@ -551,16 +575,19 @@ def split_data(data):
 
 def main():
     """
-    Execute the main workflow for data preprocessing,
-    RFM analysis, market basket analysis,
-    data aggregation, and clustering.
+    Main function to execute the data pipeline, including preprocessing,
+    feature engineering, model training, and evaluation.
 
     This function performs the following steps:
-    1. Preprocess the data.
-    2. Perform RFM analysis on the preprocessed data.
-    3. Apply market basket analysis to the RFM data.
-    4. Aggregate the data to create customer-level features.
-    5. Perform K-Means clustering on the aggregated data.
+    1. Load and preprocess the data from CSV files.
+    2. Generate Recency, Frequency, and Monetary (RFM) values.
+    3. Apply market basket analysis to generate association rules.
+    4. Perform K-Means clustering on the complete dataset.
+    5. Split the data into training and validation datasets.
+    6. Aggregate the data to create customer-level features.
+    7. Round numeric columns to 2 decimal places.
+    8. Identify and keep common unique customers in the validation dataset.
+    9. Save the aggregated data to CSV files.
 
     Returns:
         None
@@ -578,7 +605,7 @@ def main():
     # Clustering on the complete dataset
     data_with_clusters = kMeans_clustering(data_rfm_and_apriori_rules)
 
-    # Save data
+    # Split the data into train and validation datasets
     train_data, validation_data = split_data(data_with_clusters)
 
     # Aggregate the data
@@ -588,12 +615,23 @@ def main():
     # Rounding decimals to 2
     numeric_cols_train = train_agg_data.select_dtypes(
         include=['number']).columns
-    train_agg_data.loc[:, numeric_cols_train] = train_agg_data[numeric_cols_train].round(
+    train_agg_data.loc[:, numeric_cols_train] = train_agg_data[
+        numeric_cols_train].round(
         2)
     numeric_cols_val = validation_agg_data.select_dtypes(
         include=['number']).columns
-    validation_agg_data.loc[:, numeric_cols_val] = validation_agg_data[numeric_cols_val].round(
+    validation_agg_data.loc[:, numeric_cols_val] = validation_agg_data[
+        numeric_cols_val].round(
         2)
+
+    # Identify common unique customers from both original datasets
+    unique_customers_train = train_agg_data['Customer ID'].unique()
+    unique_customers_validation = validation_agg_data['Customer ID'].unique()
+
+    common_customers = set(unique_customers_train).intersection(
+        unique_customers_validation)
+    validation_agg_data = validation_agg_data[validation_agg_data[
+        'Customer ID'].isin(common_customers)]
 
     # Save aggregated data
     train_agg_data.to_csv(f'{csv_dir}train_data.csv', index=False)

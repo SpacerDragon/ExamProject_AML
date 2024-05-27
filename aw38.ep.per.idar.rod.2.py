@@ -12,6 +12,7 @@ import os
 import pickle
 import math
 import pandas as pd
+import numpy as np
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.feature_selection import RFE
@@ -180,15 +181,15 @@ def run_models(
     # Hyperparameter grids
     param_grids = {
         'Random Forest': {
-            'model__n_estimators': [250, 300, 350],
-            'model__max_depth': [10, 15, 20],
-            'model__min_samples_split': [4, 5, 6]
+            'model__n_estimators': [200, 250, 300],
+            'model__min_samples_split': [2, 3, 4],
+            'model__max_depth': [5, 10, 15],
         },
         'Gradient Boosting': {
-            'model__n_estimators': [300, 350, 400, 450],
-            'model__learning_rate': [0.09, 0.1, 0.11, 0.12],
-            'model__max_depth': [3, 4, 5],
-            'model__min_samples_split': [4, 5, 6]
+            'model__n_estimators': [150, 200, 250, 300, 350],
+            'model__min_samples_split': [2, 3, 4, 5],
+            'model__max_depth': [4, 5, 6],
+            'model__learning_rate': [0.04, 0.05, 0.09, 0.1, 0.11],
 
         }
     }
@@ -211,7 +212,7 @@ def run_models(
                 1][1].get_feature_names_out(categorical_features).tolist()
             transformed_feature_names = num_feature_names + cat_feature_names
 
-            # Define the RFE step
+            # Define the RFE(Recursive Feature Elimination) step
             rfe = RFE(estimator=model, n_features_to_select=10, step=1)
             rfe.fit(X_train_transformed, y_train_scaled.ravel())
 
@@ -288,8 +289,9 @@ def run_models(
 
     training_results_df = pd.DataFrame(results)
     print("\nTrainin results DF:\n", training_results_df)
+    columns_to_save = ['Model', 'Test MSE', 'R-squared', 'MAE']
     training_results_df.to_csv(
-        f"{csv_dir}model_evaluation_metrics.csv", index=False)
+        f"{csv_dir}model_evaluation_metrics.csv", columns=columns_to_save, index=False)
     print(
         f"\nModel eval metrics saved to {csv_dir}model_evaluation_metrics.csv")
 
@@ -350,20 +352,20 @@ def prepare_final_output(results):
         None
     """
     final_columns = [
-        'Customer ID', 'Country', 'Has_Rule',
-        'R_Score', 'F_Score',
-        'M_Score', 'RFM_Level', 'Actual_CLV'
+        'Customer ID', 'Country', 'ClusterGroup',
+        'R_Score', 'F_Score', 'M_Score',
+        'RFM_Level', 'Has_Rule', 'Quantity', 'Price',  'Actual_CLV'
     ]
     prediction_column = [
         col for col in results.columns if '_Predictions' in col]
     final_columns.extend(prediction_column)
 
     # Select the final columns
-    final_data = results[final_columns].copy()
-    final_data.loc[:,
-                   prediction_column] = final_data[prediction_column].round(2)
+    final_data = results[final_columns].copy(deep=True)
+    final_data[prediction_column] = final_data[prediction_column].round(2)
+    final_data['Actual_CLV'] = final_data['Actual_CLV'].round(2)
 
-    final_data.to_csv(f"{csv_dir}final_customer_insights.csv", index=False)
+    final_data.to_csv(f"{csv_dir}customer_insights_CLV.csv", index=False)
     print(
         f"Final customer insights saved to {csv_dir}final_customer_insights.csv")
 
@@ -419,12 +421,13 @@ def visualize_predictions(predictions):
     # plt.show()
 
 
-def remove_high_outliers(df, column):
-    Q1 = df[column].quantile(0.25)
-    Q3 = df[column].quantile(0.75)
-    IQR = Q3 - Q1
-    upper_bound = Q3 + 5 * IQR
-    return df[df[column] <= upper_bound]
+# def remove_high_outliers(df, column, upper_bound):
+#     # Clip values above the upper bound
+#     return df[df[column] <= upper_bound]
+
+def remove_outliers(df, column, lower_bound, upper_bound):
+    # Removing values outside the specified bounds
+    return df[(df[column] >= lower_bound) & (df[column] <= upper_bound)]
 
 
 def main():
@@ -442,10 +445,17 @@ def main():
     # Add actual_clv column (target label)
     train_data['Actual_CLV'] = train_data['TotalSpend'] * 5
 
+    # Remove outliers
+    train_data['Price_log'] = np.log1p(train_data['Price'])
+    train_data['Quantity_log'] = np.log1p(train_data['Quantity'])
+
+    validation_data['Price_log'] = np.log1p(validation_data['Price'])
+    validation_data['Quantity_log'] = np.log1p(validation_data['Quantity'])
+
     # Target feature not included here.
     base_columns = [
         'RFM_Level', 'R_Score', 'F_Score',
-        'M_Score', 'Price', 'Quantity',
+        'M_Score', 'Price_log', 'Quantity_log',
         'Month', 'DayOfWeek', 'TimeOfDay',
         'Has_Rule'
     ]
@@ -461,17 +471,11 @@ def main():
     # Reset the index to avoid ambiguity
     train_data.reset_index(drop=True, inplace=True)
 
-    # Remove high outliers
-    columns_to_cap = ['Price', 'Quantity']
-    for column in columns_to_cap:
-        train_data = train_data.groupby('Customer ID').apply(
-            lambda df: remove_high_outliers(df, column)).reset_index(drop=True)
-        validation_data = validation_data.groupby('Customer ID').apply(
-            lambda df: remove_high_outliers(df, column)).reset_index(drop=True)
-
     # Check data distribution
     check_data_distribution(
-        train_data, feature_columns, categorical_features)
+        validation_data, feature_columns, categorical_features)
+    # check_data_distribution(
+    #     validation_data, feature_columns, categorical_features)
 
     # Initialize best_model
     best_model = None
@@ -492,6 +496,7 @@ def main():
     # Displaying the predictions, and save plots
     visualize_predictions(predictions)
 
+    # Preparing final output and save results to csv file.
     prepare_final_output(predictions)
 
 
