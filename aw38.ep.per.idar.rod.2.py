@@ -1,8 +1,8 @@
-# This scripts purpose is to predict customer lifetime value of 5 years.
-# As well as creating visualizations of data distrisbution and feature
+# This scripts purpose is to predict customer lifetime value of 5 years,
+# and creating visualizations of data distrisbution and feature
 # importances, and preparing the final outputs:
-# final_customer_insigths.csv
-# final_insights_barplot.png
+# customer_insigths.csv
+# actual_vs_predicted_clv.png
 #
 # Author: Per Idar Rød.
 # post@peridar.net
@@ -23,7 +23,8 @@ from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.preprocessing import (StandardScaler, OneHotEncoder)
-from sklearn.model_selection import (train_test_split, RandomizedSearchCV,)
+from sklearn.model_selection import (
+    train_test_split, RandomizedSearchCV)
 
 
 # Setting paths
@@ -53,7 +54,8 @@ def check_data_distribution(data, feature_columns, categorical_features):
           data[feature_columns].describe())
 
     numerical_features = [
-        col for col in feature_columns if col not in categorical_features and not col.startswith('Rule_')]
+        col for col in feature_columns if col not in
+        categorical_features and not col.startswith('Rule_')]
 
     num_features = len(numerical_features)
     num_cols = 3
@@ -128,7 +130,7 @@ def run_models(
         data,
         feature_columns,
         categorical_features,
-        use_gridsearch=True,
+        use_randomsearch=True,
         best_model=None):
     """
     Run machine learning models on the provided data,
@@ -232,7 +234,7 @@ def run_models(
                 ('model', model)
             ])
 
-            if use_gridsearch and name in param_grids:
+            if use_randomsearch and name in param_grids:
                 random_search = RandomizedSearchCV(
                     pipeline, param_grids[name],
                     cv=5, scoring='neg_mean_squared_error',
@@ -269,9 +271,9 @@ def run_models(
         mae = mean_absolute_error(y_test_original, y_pred)
         r2 = r2_score(y_test_original, y_pred)
         result = {'Model': name,
-                  'Test MSE': mse,
-                  'R-squared': r2,
-                  'MAE': mae
+                  'MSE': mse.round(2),
+                  'R-squared': r2.round(2),
+                  'MAE': mae.round(2)
                   }
 
         # Feature importances for applicable models
@@ -283,20 +285,20 @@ def run_models(
                 list(pipeline.named_steps['preprocessor'].named_transformers_[
                     'cat'].get_feature_names_out())
             result['Feature Importances'] = dict(
-                zip(feature_names, feature_importances))
+                zip(feature_names, feature_importances.round(5)))
 
         results.append(result)
 
     training_results_df = pd.DataFrame(results)
-    print("\nTrainin results DF:\n", training_results_df)
-    columns_to_save = ['Model', 'Test MSE', 'R-squared', 'MAE']
+    columns_to_print = ['Model', 'MSE', 'R-squared', 'MAE']
+    print("\nTest results DF:\n", training_results_df[columns_to_print])
     training_results_df.to_csv(
-        f"{csv_dir}model_evaluation_metrics.csv", columns=columns_to_save, index=False)
+        f"{csv_dir}model_evaluation_metrics.csv", index=False)
     print(
         f"\nModel eval metrics saved to {csv_dir}model_evaluation_metrics.csv")
 
     # Identify the best model based on Test MSE
-    best_model_row = training_results_df.loc[training_results_df['Test MSE'].idxmin(
+    best_model_row = training_results_df.loc[training_results_df['MSE'].idxmin(
     )]
     best_model = best_model_row['Model']
     print(f"Best model based on Test MSE: {best_model}")
@@ -319,7 +321,8 @@ def make_predictions(data, feature_columns, best_model):
         data (pd.DataFrame): The input data.
         feature_columns (list): List of feature columns to be used
         for making predictions.
-        best_model_name (str): The name of the best model to be used for predictions.
+        best_model_name (str): The name of the best model to be
+        used for predictions.
 
     Returns:
         pd.DataFrame: DataFrame with predictions added.
@@ -352,7 +355,7 @@ def prepare_final_output(results):
         None
     """
     final_columns = [
-        'Customer ID', 'Country', 'ClusterGroup',
+        'Customer ID', 'Country',
         'R_Score', 'F_Score', 'M_Score',
         'RFM_Level', 'Has_Rule', 'Quantity', 'Price',  'Actual_CLV'
     ]
@@ -382,20 +385,24 @@ def visualize_predictions(predictions):
         None
     """
 
+    # Display top 10 customers.
     top_n = 10
     top_customers = predictions.nlargest(
-        top_n, 'CLV_Predictions').sort_values(by='CLV_Predictions', ascending=False)
+        top_n, 'CLV_Predictions').sort_values(
+        by='CLV_Predictions', ascending=False)
     plt.figure(figsize=(10, 6))
 
     sns.barplot(x=top_customers['Customer ID'].astype(
-        str), y=top_customers['CLV_Predictions'], palette='viridis', hue=top_customers['Customer ID'].astype(
+        str), y=top_customers['CLV_Predictions'],
+        palette='viridis', hue=top_customers['Customer ID'].astype(
         str), legend=False)
     plt.title(f'Top {top_n} Customers by Predicted CLV')
     plt.xlabel('Customer ID')
     plt.ylabel('Predicted CLV')
     plt.savefig(f"{plot_dir}top_customers_by_clv.png")
 
-    # Scatter plot for actual vs. predicted CLV for all customers
+    # Scatter plot for actual vs. predicted CLV for all customers,
+    # validation data.
     plt.figure(figsize=(14, 7))
     sns.scatterplot(
         x=predictions['Actual_CLV'], y=predictions['CLV_Predictions'], label='Predictions')
@@ -408,26 +415,17 @@ def visualize_predictions(predictions):
     plt.legend()
     plt.savefig(f"{plot_dir}actual_vs_predicted_clv.png")
 
-    # Residual plot
-    plt.figure(figsize=(14, 7))
-    sns.scatterplot(x=predictions['Actual_CLV'],
-                    y=predictions['Actual_CLV'] - predictions['CLV_Predictions'])
-    plt.axhline(0, color='red', linestyle='--')
-    plt.title('Residuals: Actual CLV - Predicted CLV')
-    plt.xlabel('Actual CLV')
-    plt.ylabel('Residuals (Actual CLV - Predicted CLV)')
-    plt.savefig(f"{plot_dir}residuals_clv.png")
+    # # Residual plot
+    # plt.figure(figsize=(14, 7))
+    # sns.scatterplot(x=predictions['Actual_CLV'],
+    #                 y=predictions['Actual_CLV'] - predictions['CLV_Predictions'])
+    # plt.axhline(0, color='red', linestyle='--')
+    # plt.title('Residuals: Actual CLV - Predicted CLV')
+    # plt.xlabel('Actual CLV')
+    # plt.ylabel('Residuals (Actual CLV - Predicted CLV)')
+    # plt.savefig(f"{plot_dir}residuals_clv.png")
 
-    # plt.show()
-
-
-# def remove_high_outliers(df, column, upper_bound):
-#     # Clip values above the upper bound
-#     return df[df[column] <= upper_bound]
-
-def remove_outliers(df, column, lower_bound, upper_bound):
-    # Removing values outside the specified bounds
-    return df[(df[column] >= lower_bound) & (df[column] <= upper_bound)]
+    plt.show()
 
 
 def main():
@@ -445,7 +443,7 @@ def main():
     # Add actual_clv column (target label)
     train_data['Actual_CLV'] = train_data['TotalSpend'] * 5
 
-    # Remove outliers
+    # Perform log-transformations
     train_data['Price_log'] = np.log1p(train_data['Price'])
     train_data['Quantity_log'] = np.log1p(train_data['Quantity'])
 
@@ -477,19 +475,23 @@ def main():
     # check_data_distribution(
     #     validation_data, feature_columns, categorical_features)
 
-    # Initialize best_model
-    best_model = None
+    # Initialize model manually, None selects the best model automatically.
+    # Uncomment the model wanted to run only that.
+    model = None
+    # model = 'Linear Regression'
+    # model = 'Random Forest'
+    # model = 'Gradient Boosting'
 
-    # Run models with or without GridSearch.
-    # GridSearchCV has an integral Cross-Validation.
-    # Set use_gridsearch to True to use it.
-    training_results_df, best_model = run_models(
+    # Run models with or without RandomSearchCV.
+    # RandomSearchCV has an integral Cross-Validation.
+    # Set use_randomsearch to True to use it.
+    training_results_df, model = run_models(
         train_data, feature_columns, categorical_features,
-        use_gridsearch=True, best_model=best_model)
+        use_randomsearch=True, best_model=model)
 
-    # Predict future spending
+    # Predict Customer Lifetime Value
     predictions = make_predictions(
-        validation_data, feature_columns, best_model)
+        validation_data, feature_columns, model)
 
     validation_data['Actual_CLV'] = validation_data['TotalSpend'] * 5
 

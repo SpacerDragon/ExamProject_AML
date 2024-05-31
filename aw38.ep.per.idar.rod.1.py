@@ -6,7 +6,7 @@
 # frequency, monetary) method. Applying unsupervised clustering to the data.
 # Creating visualizations showing the impact of the rules created.
 # Finally exporting the enriched DataFrames as a new csv-files, ready
-# for machine learning algorithms.
+# for other machine learning algorithms.
 
 # Author: Per Idar Rød.
 # post@peridar.net
@@ -496,7 +496,7 @@ def kMeans_clustering(data):
         # Plotting clusters using PCA components
         fig, ax = plt.subplots(figsize=(10, 8))
         scatter = ax.scatter(data['PCA1'], data['PCA2'],
-                             c=data['ClusterGroup'], cmap='viridis')
+                             c=data['ClusterGroup'], cmap='viridis', alpha=0.5)
         legend1 = ax.legend(*scatter.legend_elements(), title="Clusters")
         ax.add_artist(legend1)
         ax.set_title('Clusters visualized using PCA')
@@ -540,12 +540,11 @@ def kMeans_clustering(data):
         data['Price'] = data['Price'].round(2)
         data['M_Score'] = data['M_Score'].round(2)
 
-        print("Results:\n", data.head())
-        print("Silhoutte:\n", silhouette)
+        print("Results:\n", data.head(), "\n")
+        print("\nSilhoutte:\n", silhouette)
         print("\nClustering executed successfully.\n")
 
         data['TotalSpend'] = data['TotalSpend'].round(2)
-        data.to_csv(f"{csv_dir}clustered_data.csv", index=False)
 
         return data
     except Exception as e:
@@ -582,9 +581,9 @@ def main():
     1. Load and preprocess the data from CSV files.
     2. Generate Recency, Frequency, and Monetary (RFM) values.
     3. Apply market basket analysis to generate association rules.
-    4. Perform K-Means clustering on the complete dataset.
-    5. Split the data into training and validation datasets.
-    6. Aggregate the data to create customer-level features.
+    4. Split the data into training and validation datasets.
+    5. Aggregate the data to create customer-level features.
+    6. Perform K-Means clustering on the complete dataset.
     7. Round numeric columns to 2 decimal places.
     8. Identify and keep common unique customers in the validation dataset.
     9. Save the aggregated data to CSV files.
@@ -602,15 +601,17 @@ def main():
     data_rfm_and_apriori_rules = market_basket_analysis(
         data_rfm)
 
-    # Clustering on the complete dataset
-    data_with_clusters = kMeans_clustering(data_rfm_and_apriori_rules)
-
     # Split the data into train and validation datasets
-    train_data, validation_data = split_data(data_with_clusters)
+    train_data, validation_data = split_data(data_rfm_and_apriori_rules)
 
     # Aggregate the data
     train_agg_data = aggregate_data(train_data)
     validation_agg_data = aggregate_data(validation_data)
+    complete_agg_data = aggregate_data(data_rfm_and_apriori_rules)
+
+    # Clustering on the complete dataset
+    data_with_clusters = kMeans_clustering(complete_agg_data)
+    data_with_clusters.to_csv(f"{csv_dir}clustered_data.csv", index=False)
 
     # Rounding decimals to 2
     numeric_cols_train = train_agg_data.select_dtypes(
